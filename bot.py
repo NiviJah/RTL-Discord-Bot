@@ -3,6 +3,7 @@ import logging
 import credentials
 import aiohttp
 import asyncio
+import time
 from random import randint
 from collections import deque
 from discord import opus
@@ -27,6 +28,71 @@ def char_lang(char): #returns if the char is rtl, ltr, or not direction based
     if ord('a') <= charcode <= ord('z') or ord('A') <= charcode <= ord('Z'):
         return "ltr"
     return ""
+
+def remove_unknown_chars(str): #removes characters that their language is unknown
+    clean_str = ""
+    for i, char in enumerate(str):
+        lang = char_lang(char)
+        if lang == "rtl" or lang == "ltr":
+            clean_str += char
+
+    return clean_str
+
+def correct_text(text): #corrects ltr text to rtl text (plain text, not a message)
+    temp = "" #storage of temporary part of sentence
+    parts = [] #the parts of the sentence (seperated by language)
+    neutralChars = "" #characters with no specific direction, should check what is the next character after them and then get a direction
+    endChars = "" #characters that should be kept and added at the end of the string
+    chartype = "rtl"
+    prevchartype = "rtl"
+    for i, char in enumerate(text):
+        chartype = char_lang(char)
+        if chartype == "":
+            neutralChars += char
+        else:
+            if chartype == prevchartype: #same language, or language-neutral
+                if len(neutralChars) > 0: #add neutral chars from previous part
+                    temp += neutralChars
+                    neutralChars = ""
+                temp += char
+            else: #different language
+                if len(endChars) > 0: #add end chars from previous
+                    temp += endChars
+                    endChars = ""
+                endChars = neutralChars
+                neutralChars = ""
+                parts.append(temp) #cut the sentence
+                temp = ""
+                temp += char #new language part
+                prevchartype = chartype
+    
+    temp = neutralChars + temp + endChars
+    parts.append(temp) #append last sentence
+    parts.reverse() #change direction
+    return "".join(parts) #join it all together and return
+
+async def check_needs_correcting(msg): #suggests to correct the message if the bot has not effect on its text
+    content = remove_unknown_chars(msg.content) #remove unknown chars so punctuation etc. won't be taken to account
+
+    if content != correct_text(content): #content can be corrected
+        await client.add_reaction(msg, '\U0001F4AB') # :dizzy:
+        time.sleep(0.3) #delay to not be rate limited
+        await client.add_reaction(msg, '\U0000274C') # :x:
+        msg_time = time.time()
+        while time.time() < msg_time + 30: #wait for 30 seconds for a response
+            choice = await client.wait_for_reaction(['\U0001F4AB', '\U0000274C'], message=msg, timeout=30) #wait for a choice
+            if choice is not None and choice.user != client.user: #make sure the bot doesn't respond to its own vote
+                if choice.reaction.emoji == '\U0001F4AB': #chose to correct
+                    await rtl(msg, False)
+                break; #stop while loop
+
+        try: #try to remove the choices
+            await client.clear_reactions(msg) 
+        except: #couldn't, at least remove your own shit ffs
+            await client.remove_reaction(msg, '\U0000274C', client.user)
+            time.sleep(0.3) #delay to not be rate limited
+            await client.remove_reaction(msg, '\U0001F4AB', client.user)
+
 
 #commands:
 
@@ -159,42 +225,14 @@ async def meow(msg): # $meow
     player = voice.create_ffmpeg_player('sounds/meow.mp3')
     player.start()
 
-async def rtl(msg): # $, left to right text -> right to left text
-    str = msg.content[1:] # the sentence to process
+async def rtl(msg, hasPrefix): # $, left to right text -> right to left text
+    if hasPrefix:
+        str = msg.content[1:] # the sentence to process
+    else:
+        str = msg.content
     if len(str) > 0: #not empty
-        temp = "" #storage of temporary part of sentence
-        parts = [] #the parts of the sentence (seperated by language)
-        neutralChars = "" #characters with no specific direction, should check what is the next character after them and then get a direction
-        endChars = "" #characters that should be kept and added at the end of the string
-        chartype = "rtl"
-        prevchartype = "rtl"
-        for i, char in enumerate(str):
-            chartype = char_lang(char)
-            if chartype == "":
-                neutralChars += char
-            else:
-                if chartype == prevchartype: #same language, or language-neutral
-                    if len(neutralChars) > 0: #add neutral chars from previous part
-                        temp += neutralChars
-                        neutralChars = ""
-                    temp += char
-                else: #different language
-                    if len(endChars) > 0: #add end chars from previous
-                        temp += endChars
-                        endChars = ""
-                    endChars = neutralChars
-                    neutralChars = ""
-                    parts.append(temp) #cut the sentence
-                    temp = ""
-                    temp += char #new language part
-                    prevchartype = chartype
-
-        temp = neutralChars + temp + endChars
-        parts.append(temp) #append last sentence
-        parts.reverse() #change direction
-        output = "".join(parts) #join it all together
-
-        await client.send_message(msg.channel, "__***{}:***__\n{}".format(msg.author.display_name, output))
+        output = correct_text(str)
+        await client.send_message(msg.channel, embed=make_quote(msg.author, output)) #send a rich embed with the corrected text
 
 
 #OPUS_LIBS = ['libopus-0.x86.dll', 'libopus-0.x64.dll', 'libopus-0.dll', 'libopus.so.0', 'libopus.0.dylib']
@@ -221,6 +259,12 @@ async def rtl(msg): # $, left to right text -> right to left text
 #                    return channel
 #    return
 
+def make_quote(author, content):
+    em = discord.Embed(description=content, color=0xFC9F14)
+    em.set_author(name=author.display_name, icon_url=author.avatar_url)
+    return em
+
+
 
 @client.event
 async def on_message(msg):
@@ -245,8 +289,13 @@ async def on_message(msg):
         return
 
     if msg.content.startswith("$"):
-        await rtl(msg)
+        await rtl(msg, True)
         return
+    if msg.content.startswith("!qutme "):
+        await client.send_message(msg.channel, msg.content[7:])
+        return
+
+    await check_needs_correcting(msg) #check if the message can be corrected by the bot
 
 @client.event
 async def on_ready():

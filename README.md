@@ -8,6 +8,8 @@ Basic commands are:
 * `$doge` - Sends a random Shiba Inu (from reddit)
 * `<text>^^2` - Squares any text
 
-This is my first bot, originally written in discord.js. I rewrote it in python using discord.py.
+The bot also automatically detects multilingual text and suggests correcting it:
 
-There are probably some bugs in this and I'll probably not bother fixing them because I am lazy (so don't rely on this bot).
+![Demonstration](http://i.imgur.com/UzXJMFv.gif)
+
+This is my first bot, originally written in discord.js. I rewrote it in python using discord.py.
